@@ -201,6 +201,7 @@ export function useGame() {
   function dismissRecruitmentEvent() {
     if (!state.value?.recruitment) return
     state.value.recruitment.lastEvent = null
+    autoSave()
   }
 
   return {

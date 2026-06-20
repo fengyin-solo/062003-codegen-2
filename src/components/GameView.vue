@@ -5,8 +5,11 @@
       :days-left="daysLeft"
       :profit="profit"
       :theme="theme"
+      :active-count="activeTrainees.length"
+      :max-trainees="maxTrainees"
       @back="$emit('back')"
       @toggle-theme="$emit('toggle-theme')"
+      @open-recruitment="showRecruitment = true"
     />
 
     <div class="game-body">
@@ -75,6 +78,19 @@
       @back="$emit('back')"
     />
 
+    <RecruitmentCenter
+      v-if="showRecruitment && state.gameStatus === 'playing'"
+      :candidates="candidates"
+      :money="state.money"
+      :active-count="activeTrainees.length"
+      :max-trainees="maxTrainees"
+      :recruitment-event="lastRecruitmentEvent"
+      @close="showRecruitment = false"
+      @refresh="onRefreshCandidates"
+      @sign="onSignCandidate"
+      @dismiss-event="$emit('dismiss-recruitment-event')"
+    />
+
     <div v-if="toast" class="toast">{{ toast }}</div>
   </div>
 </template>
@@ -91,6 +107,7 @@ import RatingModal from './RatingModal.vue'
 import DebutModal from './DebutModal.vue'
 import EventModal from './EventModal.vue'
 import GameOverModal from './GameOverModal.vue'
+import RecruitmentCenter from './RecruitmentCenter.vue'
 
 const props = defineProps({
   state: Object,
@@ -101,6 +118,9 @@ const props = defineProps({
   canEndDay: Boolean,
   ratingResults: Array,
   calcScore: Function,
+  candidates: Array,
+  maxTrainees: Number,
+  lastRecruitmentEvent: Object,
 })
 
 const emit = defineEmits([
@@ -113,9 +133,13 @@ const emit = defineEmits([
   'debut',
   'resolve-poaching',
   'release-single',
+  'refresh-candidates',
+  'sign-candidate',
+  'dismiss-recruitment-event',
 ])
 
 const showDebut = ref(false)
+const showRecruitment = ref(false)
 const toast = ref('')
 
 function onDebut(memberIds, groupName) {
@@ -129,6 +153,32 @@ function onDebut(memberIds, groupName) {
       setTimeout(() => { toast.value = '' }, 3000)
     }
   })
+}
+
+function onRefreshCandidates() {
+  emit('refresh-candidates', (result) => {
+    if (result?.success) {
+      if (result.event) {
+        showToast(`${result.event.label}：${result.event.message}`, 'info')
+      }
+    } else if (result?.message) {
+      showToast(result.message, 'error')
+    }
+  })
+}
+
+function onSignCandidate(candidateId, callback) {
+  emit('sign-candidate', candidateId, (result) => {
+    if (callback) callback(result)
+    if (result?.success) {
+      showToast('签约成功！练习生已加入事务所', 'success')
+    }
+  })
+}
+
+function showToast(text, type = 'info') {
+  toast.value = text
+  setTimeout(() => { toast.value = '' }, 2800)
 }
 </script>
 

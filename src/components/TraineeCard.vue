@@ -18,6 +18,18 @@
       </div>
     </div>
 
+    <div v-if="trainee.traits && trainee.traits.length > 0" class="traits-row">
+      <div
+        v-for="trait in traitsInfo"
+        :key="trait.key"
+        class="trait-tag"
+        :title="trait.description"
+      >
+        <span class="trait-icon">{{ trait.icon }}</span>
+        <span class="trait-label">{{ trait.label }}</span>
+      </div>
+    </div>
+
     <div class="stats-grid">
       <div v-for="key in statKeys" :key="key" class="stat-cell">
         <span class="stat-label">{{ statLabels[key] }}</span>
@@ -60,6 +72,13 @@ const statusClass = computed(() => ({
   left: props.trainee.status === 'left',
   ill: props.trainee.illnessDays > 0,
 }))
+
+const traitsInfo = computed(() =>
+  (props.trainee.traits || []).map(key => ({
+    key,
+    ...GAME_CONFIG.traits[key],
+  })).filter(t => t.label)
+)
 </script>
 
 <style scoped>
@@ -92,6 +111,38 @@ const statusClass = computed(() => ({
 .badge.left { background: var(--danger-soft); color: var(--danger); }
 
 .bars { margin-bottom: 0.75rem; }
+
+.traits-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-bottom: 0.6rem;
+}
+
+.trait-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.18rem 0.45rem;
+  border-radius: 5px;
+  background: var(--accent-soft);
+  font-size: 0.68rem;
+  cursor: help;
+  transition: transform 0.15s;
+}
+
+.trait-tag:hover {
+  transform: translateY(-1px);
+}
+
+.trait-icon {
+  font-size: 0.78rem;
+}
+
+.trait-label {
+  color: var(--accent);
+  font-weight: 500;
+}
 
 .bar-row {
   display: flex;

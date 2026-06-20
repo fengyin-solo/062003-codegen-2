@@ -18,6 +18,9 @@
     :can-end-day="canEndDay()"
     :rating-results="getRatingResults()"
     :calc-score="calcTraineeScore"
+    :candidates="candidates"
+    :max-trainees="maxTrainees"
+    :last-recruitment-event="lastRecruitmentEvent"
     @back="backToMenu"
     @toggle-theme="toggleTheme"
     @set-schedule="setSchedule"
@@ -27,6 +30,9 @@
     @debut="onDebut"
     @resolve-poaching="handlePoaching"
     @release-single="onReleaseSingle"
+    @refresh-candidates="onRefreshCandidates"
+    @sign-candidate="onSignCandidate"
+    @dismiss-recruitment-event="dismissRecruitmentEvent"
   />
 </template>
 
@@ -47,6 +53,9 @@ const {
   profit,
   daysLeft,
   activeTrainees,
+  candidates,
+  maxTrainees,
+  lastRecruitmentEvent,
   startNewGame,
   loadGame,
   setSchedule,
@@ -60,6 +69,9 @@ const {
   backToMenu,
   getRatingResults,
   calcTraineeScore,
+  refreshCandidates,
+  handleSign,
+  dismissRecruitmentEvent,
 } = useGame()
 
 onMounted(() => {
@@ -96,5 +108,15 @@ function onReleaseSingle(groupId) {
   if (result && !result.success) {
     alert(result.message)
   }
+}
+
+function onRefreshCandidates(callback) {
+  const result = refreshCandidates()
+  if (callback) callback(result)
+}
+
+function onSignCandidate(candidateId, callback) {
+  const result = handleSign(candidateId)
+  if (callback) callback(result)
 }
 </script>

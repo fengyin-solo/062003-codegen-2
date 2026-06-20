@@ -10,6 +10,10 @@ import {
   calcProfit,
   calcTraineeScore,
   getRelationship,
+  generateCandidates,
+  signCandidate,
+  triggerRecruitmentEvent,
+  getTraitsInfo,
 } from '../utils/gameLogic'
 import { saveToSlot } from '../utils/storage'
 
@@ -25,6 +29,13 @@ export function useGame() {
   const activeTrainees = computed(() =>
     state.value ? state.value.trainees.filter((t) => t.status !== 'left') : []
   )
+  const candidates = computed(() =>
+    state.value?.recruitment?.candidates || []
+  )
+  const lastRecruitmentEvent = computed(() =>
+    state.value?.recruitment?.lastEvent || null
+  )
+  const maxTrainees = GAME_CONFIG.recruitment.maxTrainees
 
   function startNewGame(slotIndex) {
     state.value = createInitialGameState()
@@ -35,6 +46,18 @@ export function useGame() {
 
   function loadGame(slotIndex, saved) {
     state.value = JSON.parse(JSON.stringify(saved.gameState))
+    if (!state.value.recruitment) {
+      state.value.recruitment = { candidates: [], lastEvent: null, pendingEvent: null }
+    }
+    if (!state.value.traineeJoinDays) {
+      state.value.traineeJoinDays = {}
+      for (const t of state.value.trainees) {
+        state.value.traineeJoinDays[t.id] = 1
+      }
+    }
+    for (const t of state.value.trainees) {
+      if (!t.traits) t.traits = []
+    }
     currentSlot.value = slotIndex
     screen.value = 'game'
   }
@@ -112,6 +135,74 @@ export function useGame() {
     return getRelationship(state.value.relationships, idA, idB)
   }
 
+  function refreshCandidates() {
+    if (!state.value) return { success: false, message: '游戏未开始' }
+
+    const event = triggerRecruitmentEvent()
+    const opts = {}
+    let cost = GAME_CONFIG.recruitment.refreshCost
+    let eventResult = null
+
+    if (event) {
+      eventResult = { label: event.label, message: event.message }
+      switch (event.effect) {
+        case 'discount':
+          cost = Math.round(cost * event.discount)
+          break
+        case 'extraCandidate':
+          opts.extraEpic = true
+          break
+        case 'guaranteeLegendary':
+          opts.guaranteeLegendary = true
+          break
+        case 'grantMoney':
+          state.value.money += event.amount
+          state.value.totalRevenue += event.amount
+          eventResult.amount = event.amount
+          break
+        case 'gainFans':
+          state.value.fans += event.amount
+          eventResult.amount = event.amount
+          break
+        case 'extraRare':
+          opts.extraRareCount = event.count
+          break
+      }
+    }
+
+    if (state.value.money < cost) {
+      return { success: false, message: `资金不足，刷新需要 ¥${cost.toLocaleString()}` }
+    }
+
+    state.value.money -= cost
+    state.value.totalExpenses += cost
+
+    const newCandidates = generateCandidates(state.value, opts)
+    state.value.recruitment = {
+      ...state.value.recruitment,
+      candidates: newCandidates,
+      lastEvent: eventResult,
+    }
+
+    autoSave()
+    return { success: true, cost, event: eventResult }
+  }
+
+  function handleSign(candidateId) {
+    if (!state.value) return { success: false, message: '游戏未开始' }
+    const result = signCandidate(state.value, candidateId)
+    if (result.success) {
+      state.value = result.state
+      autoSave()
+    }
+    return result
+  }
+
+  function dismissRecruitmentEvent() {
+    if (!state.value?.recruitment) return
+    state.value.recruitment.lastEvent = null
+  }
+
   return {
     state,
     currentSlot,
@@ -119,6 +210,9 @@ export function useGame() {
     profit,
     daysLeft,
     activeTrainees,
+    candidates,
+    lastRecruitmentEvent,
+    maxTrainees,
     startNewGame,
     loadGame,
     setSchedule,
@@ -134,5 +228,9 @@ export function useGame() {
     getRatingResults: () => (state.value ? getRatingResults(state.value) : []),
     calcTraineeScore,
     autoSave,
+    refreshCandidates,
+    handleSign,
+    dismissRecruitmentEvent,
+    getTraitsInfo,
   }
 }

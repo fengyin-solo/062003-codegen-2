@@ -7,7 +7,7 @@ export function createInitialGameState() {
   const names = [...CFG.names].sort(() => Math.random() - 0.5)
   const trainees = []
   for (let i = 0; i < CFG.initial.traineeCount; i++) {
-    trainees.push(createTrainee(names[i], i))
+    trainees.push(createTrainee(names[i], i, { assignTrait: true, rarity: 'common' }))
   }
   return {
     day: 1,
@@ -24,16 +24,33 @@ export function createInitialGameState() {
     pendingRating: false,
     gameStatus: 'playing',
     lastSingleDay: {},
+    recruitment: {
+      candidates: [],
+      lastEvent: null,
+      pendingEvent: null,
+    },
+    traineeJoinDays: Object.fromEntries(trainees.map(t => [t.id, 1])),
   }
 }
 
-function createTrainee(name, index) {
+function createTrainee(name, index, opts = {}) {
+  const { assignTrait = false, rarity = null } = opts
   const stats = {}
   for (const key of CFG.stats) {
     stats[key] = randInt(CFG.initial.statMin, CFG.initial.statMax)
   }
+
+  const traits = []
+  if (assignTrait && rarity) {
+    const rarityLevel = rarity || pickRarity()
+    const trait = pickTraitForRarity(rarityLevel)
+    if (trait) {
+      traits.push(trait)
+    }
+  }
+
   return {
-    id: `t${index}_${Date.now()}`,
+    id: `t${index}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
     name,
     stats,
     fatigue: CFG.initial.fatigue + randInt(-5, 5),
@@ -44,7 +61,206 @@ function createTrainee(name, index) {
     poachResist: randInt(40, 70),
     fans: 0,
     singlesReleased: 0,
+    traits,
   }
+}
+
+function pickRarity(override = null) {
+  if (override) return override
+  const entries = Object.entries(CFG.recruitment.rarityWeights).map(([key, weight]) => ({
+    key,
+    weight,
+  }))
+  return weightedPick(entries).key
+}
+
+function pickTraitForRarity(rarity) {
+  const availableTraits = Object.entries(CFG.traits)
+    .filter(([_, t]) => t.rarity.includes(rarity))
+    .map(([key, t]) => ({ key, ...t, weight: 1 }))
+  if (availableTraits.length === 0) return null
+  const picked = weightedPick(availableTraits)
+  return picked.key
+}
+
+export function generateCandidates(state, opts = {}) {
+  const { guaranteeLegendary = false, extraEpic = false } = opts
+  let extraRareCount = opts.extraRareCount || 0
+  const usedNames = state.trainees.map(t => t.name)
+  const availableNames = CFG.names.filter(n => !usedNames.includes(n))
+  const extraPoolNames = [
+    '楚凌霄', '白若溪', '南宫月', '司徒雪', '慕容曦',
+    '上官瑶', '东方晴', '皇甫琳', '夏侯芸', '诸葛敏',
+    '欧阳瑾', '闻人玥', '赫连清', '尉迟柔', '澹台雅',
+  ]
+  const allNames = [...availableNames, ...extraPoolNames]
+
+  let count = CFG.recruitment.candidateCount
+  let candidates = []
+  let used = []
+
+  for (let i = 0; i < count; i++) {
+    let rarity
+    if (guaranteeLegendary && i === 0) {
+      rarity = 'legendary'
+    } else if (extraRareCount > 0 && i < 2) {
+      rarity = Math.random() < 0.5 ? 'rare' : 'epic'
+      extraRareCount--
+    } else {
+      rarity = pickRarity()
+    }
+    candidates.push(createCandidate(rarity, allNames, used))
+    used.push(candidates[candidates.length - 1].name)
+  }
+
+  if (extraEpic) {
+    candidates.push(createCandidate('epic', allNames, used))
+    used.push(candidates[candidates.length - 1].name)
+  }
+
+  return candidates
+}
+
+function createCandidate(rarity, namePool, usedNames) {
+  const available = namePool.filter(n => !usedNames.includes(n))
+  const name = available.length > 0 ? pickRandom(available) : `练习生${randInt(100, 999)}`
+
+  const stats = {}
+  const bonusRange = CFG.recruitment.statBonus[rarity]
+  const mult = CFG.recruitment.rarityMultiplier[rarity]
+
+  for (const key of CFG.stats) {
+    const base = randInt(CFG.initial.statMin, CFG.initial.statMax)
+    const bonus = randInt(bonusRange[0], bonusRange[1])
+    stats[key] = clamp(Math.round((base + bonus) * (0.9 + mult * 0.1)), 0, CFG.thresholds.statCap)
+  }
+
+  const traitKey = pickTraitForRarity(rarity)
+  const traits = traitKey ? [traitKey] : []
+
+  const baseCost = randInt(CFG.recruitment.baseSignCostMin, CFG.recruitment.baseSignCostMax)
+  const signCost = Math.round(baseCost * mult)
+
+  return {
+    id: `c_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    name,
+    stats,
+    rarity,
+    traits,
+    signCost,
+    fatigue: randInt(5, 20),
+    stress: randInt(3, 15),
+    poachResist: randInt(30, 80),
+  }
+}
+
+export function triggerRecruitmentEvent() {
+  const chance = 0.35
+  if (Math.random() > chance) return null
+
+  const events = Object.entries(CFG.recruitmentEvents).map(([key, val]) => ({
+    key,
+    ...val,
+  }))
+  const picked = weightedPick(events)
+  const event = {
+    type: picked.key,
+    label: picked.label,
+    effect: picked.effect,
+    message: picked.message,
+  }
+
+  switch (picked.effect) {
+    case 'discount':
+      event.discount = picked.discount
+      break
+    case 'extraCandidate':
+      event.rarity = picked.rarity
+      break
+    case 'grantMoney':
+      event.amount = randInt(picked.amount[0], picked.amount[1])
+      break
+    case 'gainFans':
+      event.amount = randInt(picked.amount[0], picked.amount[1])
+      break
+    case 'extraRare':
+      event.count = picked.count
+      break
+  }
+
+  return event
+}
+
+export function signCandidate(state, candidateId) {
+  const candidate = state.recruitment.candidates.find(c => c.id === candidateId)
+  if (!candidate) return { success: false, message: '候选人不存在' }
+
+  const activeCount = getActiveTrainees(state).length
+  if (activeCount >= CFG.recruitment.maxTrainees) {
+    return { success: false, message: `练习生数量已达上限（${CFG.recruitment.maxTrainees}人）` }
+  }
+
+  if (state.money < candidate.signCost) {
+    return { success: false, message: '资金不足，无法签约' }
+  }
+
+  const newTrainee = {
+    id: `t_signed_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    name: candidate.name,
+    stats: { ...candidate.stats },
+    fatigue: candidate.fatigue,
+    stress: candidate.stress,
+    status: 'trainee',
+    groupId: null,
+    illnessDays: 0,
+    poachResist: candidate.poachResist,
+    fans: 0,
+    singlesReleased: 0,
+    traits: [...candidate.traits],
+  }
+
+  const trainees = [...state.trainees, newTrainee]
+  const relationships = addNewTraineeRelationships(state.relationships, state.trainees, newTrainee)
+  const traineeJoinDays = { ...state.traineeJoinDays, [newTrainee.id]: state.day }
+
+  const newCandidates = state.recruitment.candidates.filter(c => c.id !== candidateId)
+
+  const logs = [
+    ...state.logs,
+    {
+      day: state.day,
+      text: `📝 签约成功！${CFG.recruitment.rarityLabels[candidate.rarity]}级练习生「${candidate.name}」加入事务所，花费 ¥${candidate.signCost.toLocaleString()}。`,
+    },
+  ]
+
+  return {
+    success: true,
+    state: {
+      ...state,
+      money: state.money - candidate.signCost,
+      totalExpenses: state.totalExpenses + candidate.signCost,
+      trainees,
+      relationships,
+      traineeJoinDays,
+      logs,
+      recruitment: {
+        ...state.recruitment,
+        candidates: newCandidates,
+      },
+    },
+  }
+}
+
+function addNewTraineeRelationships(relationships, existingTrainees, newTrainee) {
+  const newRel = { ...relationships }
+  for (const existing of existingTrainees) {
+    if (existing.status === 'left') continue
+    newRel[pairKey(existing.id, newTrainee.id)] = randInt(
+      CFG.relationships.initialRange[0],
+      CFG.relationships.initialRange[1]
+    )
+  }
+  return newRel
 }
 
 function initRelationships(trainees) {
@@ -119,7 +335,7 @@ function applyRange(val, range, mult = 1) {
   return val + randInt(Math.round(range[0] * mult), Math.round(range[1] * mult))
 }
 
-function getTrainingMultiplier(trainee, partners, relationships) {
+function getTrainingMultiplier(trainee, partners, relationships, activityKey) {
   let mult = 1
   if (trainee.fatigue >= CFG.thresholds.fatigueExhausted) mult *= 0.5
   if (trainee.stress >= CFG.thresholds.stressHigh) mult *= 0.8
@@ -133,7 +349,94 @@ function getTrainingMultiplier(trainee, partners, relationships) {
   if (synergyCount > 0) {
     mult *= 1 + CFG.relationships.synergyBonus * Math.min(synergyCount, 2)
   }
+
+  const traitMult = getTraitTrainingBonus(trainee, activityKey, partners.length === 0)
+  mult *= traitMult
+
   return mult
+}
+
+function getTraitTrainingBonus(trainee, activityKey, isAlone) {
+  let bonus = 1
+  const daysSinceJoin = (trainee._daysSinceJoin || 0)
+
+  for (const traitKey of (trainee.traits || [])) {
+    const trait = CFG.traits[traitKey]
+    if (!trait) continue
+
+    if (trait.allTrainBonus) bonus *= (1 + trait.allTrainBonus)
+
+    if (trait.trainBonus && trait.stat) {
+      if ((activityKey === 'vocal' && trait.stat === 'vocal') ||
+          (activityKey === 'dance' && trait.stat === 'dance') ||
+          (activityKey === 'rap' && trait.stat === 'rap') ||
+          (activityKey === 'physical' && (trait.stat === 'dance' || trait.stat === 'looks')) ||
+          (activityKey === 'pr' && (trait.stat === 'charm' || trait.stat === 'looks'))) {
+        bonus *= (1 + trait.trainBonus)
+      }
+    }
+
+    if (trait.rapBonus && activityKey === 'rap') {
+      bonus *= (1 + trait.rapBonus)
+    }
+
+    if (traitKey === 'introvert' && isAlone) {
+      bonus *= (1 + trait.trainBonus)
+    }
+
+    if (trait.lateBonus && daysSinceJoin >= 100) {
+      bonus *= (1 + trait.lateBonus)
+    }
+  }
+
+  return bonus
+}
+
+function getTraitFatigueModifier(trainee) {
+  let mod = 1
+  for (const traitKey of (trainee.traits || [])) {
+    const trait = CFG.traits[traitKey]
+    if (trait && trait.fatigueReduce) mod *= (1 - trait.fatigueReduce)
+  }
+  return mod
+}
+
+function getTraitStressModifier(trainee) {
+  let mod = 1
+  for (const traitKey of (trainee.traits || [])) {
+    const trait = CFG.traits[traitKey]
+    if (!trait) continue
+    if (trait.stressReduce) mod *= (1 - trait.stressReduce)
+    if (trait.stressPenalty) mod *= (1 + trait.stressPenalty)
+  }
+  return mod
+}
+
+function getTraitFansModifier(trainee) {
+  let mod = 1
+  for (const traitKey of (trainee.traits || [])) {
+    const trait = CFG.traits[traitKey]
+    if (trait && trait.fansBonus) mod *= (1 + trait.fansBonus)
+  }
+  return mod
+}
+
+function getTraitPublicModifier(trainee) {
+  let mod = 1
+  for (const traitKey of (trainee.traits || [])) {
+    const trait = CFG.traits[traitKey]
+    if (!trait) continue
+    if (trait.publicBonus) mod *= (1 + trait.publicBonus)
+    if (traitKey === 'introvert' && trait.publicPenalty) mod *= (1 - trait.publicPenalty)
+  }
+  return mod
+}
+
+export function getTraitsInfo(trainee) {
+  return (trainee.traits || []).map(key => ({
+    key,
+    ...CFG.traits[key],
+  }))
 }
 
 export function processDay(state) {
@@ -144,6 +447,11 @@ export function processDay(state) {
   const relationships = { ...state.relationships }
   const trainees = state.trainees.map((t) => ({ ...t, stats: { ...t.stats } }))
   const schedule = state.schedule
+
+  const joinDays = state.traineeJoinDays || {}
+  for (const t of trainees) {
+    t._daysSinceJoin = state.day - (joinDays[t.id] || state.day)
+  }
 
   const activityGroups = {}
   for (const [traineeId, activity] of Object.entries(schedule)) {
@@ -185,7 +493,11 @@ export function processDay(state) {
       .map((id) => trainees.find((t) => t.id === id))
       .filter(Boolean)
 
-    const mult = getTrainingMultiplier(trainee, partners, relationships)
+    const mult = getTrainingMultiplier(trainee, partners, relationships, activityKey)
+    const fatigueMod = getTraitFatigueModifier(trainee)
+    const stressMod = getTraitStressModifier(trainee)
+    const fansMod = getTraitFansModifier(trainee)
+    const publicMod = getTraitPublicModifier(trainee)
 
     if (activity.requiresTraining && trainee.stress >= CFG.thresholds.stressBreakdown) {
       logs.push({ day: state.day, text: `${trainee.name} 压力过大，无法集中精力训练。` })
@@ -193,22 +505,42 @@ export function processDay(state) {
       continue
     }
 
+    let hasProdigyBonus = false
     for (const [stat, range] of Object.entries(activity.statGain || {})) {
       const gain = randInt(range[0], range[1])
+      let finalGain = Math.round(gain * mult)
+
+      for (const traitKey of (trainee.traits || [])) {
+        const trait = CFG.traits[traitKey]
+        if (trait?.statGainChance && Math.random() < trait.statGainChance) {
+          finalGain += 1
+          hasProdigyBonus = true
+        }
+      }
+
       trainee.stats[stat] = clamp(
-        trainee.stats[stat] + Math.round(gain * mult),
+        trainee.stats[stat] + finalGain,
         0,
         CFG.thresholds.statCap
       )
     }
+    if (hasProdigyBonus) {
+      logs.push({ day: state.day, text: `✨ ${trainee.name} 灵光一闪，训练效果额外提升！` })
+    }
 
-    trainee.fatigue = clamp(applyRange(trainee.fatigue, activity.fatigue), 0, 100)
-    trainee.stress = clamp(applyRange(trainee.stress, activity.stress), 0, 100)
+    const fatigueGain = Math.round((activity.fatigue[1] - activity.fatigue[0]) * fatigueMod)
+    const fatigueBase = activity.fatigue[0]
+    trainee.fatigue = clamp(trainee.fatigue + randInt(fatigueBase, fatigueBase + fatigueGain), 0, 100)
+
+    const stressGain = Math.round((activity.stress[1] - activity.stress[0]) * stressMod)
+    const stressBase = activity.stress[0]
+    trainee.stress = clamp(trainee.stress + randInt(stressBase, stressBase + stressGain), 0, 100)
 
     if (activity.fansGain) {
-      const gained = randInt(activity.fansGain[0], activity.fansGain[1])
+      const baseGain = randInt(activity.fansGain[0], activity.fansGain[1])
+      const gained = Math.round(baseGain * fansMod * publicMod)
       fans += gained
-      trainee.fans += Math.round(gained * 0.3)
+      trainee.fans += Math.round(gained * 0.3 * fansMod)
       logs.push({ day: state.day, text: `${trainee.name} 参与公关，粉丝 +${gained}。` })
     }
 
@@ -493,13 +825,22 @@ export function releaseSingle(state, groupId) {
   const charmAvg = group.avgStats.charm
   const popularity = state.fans + members.reduce((s, m) => s + m.fans, 0)
 
-  const sales = Math.round(
+  let salesBonus = 1
+  for (const m of members) {
+    for (const traitKey of (m.traits || [])) {
+      const trait = CFG.traits[traitKey]
+      if (trait?.salesBonus) salesBonus *= (1 + trait.salesBonus)
+    }
+  }
+
+  const baseSales = Math.round(
     CFG.single.baseSales +
       statAvg * CFG.single.statWeight * 50 +
       popularity * CFG.single.fansWeight * 0.08 +
       charmAvg * CFG.single.charmWeight * 30 +
       randInt(-200, 400)
   )
+  const sales = Math.round(baseSales * salesBonus)
 
   const revenue = sales * CFG.single.revenuePerSale
   const groups = state.groups.map((g) => {
